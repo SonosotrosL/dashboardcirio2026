@@ -2,17 +2,17 @@
   'use strict';
 
   var INTERVALO = 30000;           // atualização automática (ms)
-  var CHAVE_CACHE = 'painel-cirio-2026:dados';
-  var CHAVE_DATA = 'painel-cirio-2026:data';
+  var CHAVE_CACHE = 'painel-cirio-2026:dados-v2';
   var PASSO_TABELA = 40;
 
-  var SITE = window.SETORES_SITE || [];
+  var CHAVE_SITE = 'painel-cirio-2026:site';
+  var INTERVALO_SITE = 60000;
+  var SITE = { url: '', setores: [], equipe: {}, registros: {} };
   var $ = function (id) { return document.getElementById(id); };
 
   var estado = {
     bruto: null,          // resposta da API
     calc: null,           // resultado dos cálculos
-    data: lerLocal(CHAVE_DATA) || 'todas',
     filtro: 'todos',
     busca: '',
     limiteTabela: PASSO_TABELA,
@@ -35,28 +35,13 @@
     if (n == null || !isFinite(n)) return '—';
     return n.toLocaleString('pt-BR', { minimumFractionDigits: d || 0, maximumFractionDigits: d || 0 });
   }
-  function pct(v) { return v == null || v === '' ? '—' : nf(v * 100, 0) + '%'; }
+  function pct(v) { return v == null || v === '' ? '—' : nf(v * 100, 1) + '%'; }
   function hhmm(min) {
     if (min == null) return '—';
     var m = Math.round(min) % 1440;
     return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
   }
-  function horas(h) {
-    if (h == null || h === '') return '—';
-    var t = Math.round(h * 60);
-    return Math.floor(t / 60) + 'h' + String(t % 60).padStart(2, '0');
-  }
-  var DIAS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
   function dataCurta(iso) { if (!iso) return '—'; var p = iso.split('-'); return p[2] + '/' + p[1]; }
-  function dataLonga(iso) {
-    if (!iso) return '—';
-    var p = iso.split('-'); var d = new Date(+p[0], +p[1] - 1, +p[2]);
-    return p[2] + '/' + p[1] + '/' + p[0] + ' (' + DIAS[d.getDay()] + ')';
-  }
-  function dataSemana(iso) {
-    var p = iso.split('-'); var d = new Date(+p[0], +p[1] - 1, +p[2]);
-    return DIAS[d.getDay()];
-  }
 
   /* ================= setores do Caderno (mapas) ================= */
   // "ROTA T03" → T3 · "LAVAGEM - SETOR LT1" → LT1 · "LP01" → LP1 · "ROTA P12" → P12
@@ -68,14 +53,17 @@
     if (/\bCA\b|COLETA ANTECIPADA/.test(s)) return 'CA';
     return null;
   }
-  var SITE_POR_COD = {};
-  var SITE_POR_TIT = {};
-  SITE.forEach(function (s) {
-    var c = s.cod && /[A-Z]/i.test(s.cod) ? codigoDe(s.cod) || chave(s.cod) : null;
-    if (c && !SITE_POR_COD[c]) SITE_POR_COD[c] = s;
-    SITE_POR_TIT[chave(semAcento(s.titulo)).replace(/[–-]/g, '-')] = s;
-  });
-  var cacheSite = {};
+  var SITE_POR_COD = {}, SITE_POR_TIT = {}, cacheSite = {};
+  function indexarSite(d) {
+    SITE = { url: d.url || '', setores: d.setores || [], equipe: d.equipe || {}, registros: d.registros || {} };
+    SITE_POR_COD = {}; SITE_POR_TIT = {}; cacheSite = {};
+    SITE.setores.forEach(function (s) {
+      var c = s.cod && /[A-Z]/i.test(s.cod) ? codigoDe(s.cod) || chave(s.cod) : null;
+      if (c && !SITE_POR_COD[c]) SITE_POR_COD[c] = s;
+      SITE_POR_TIT[chave(semAcento(s.titulo)).replace(/[–-]/g, '-')] = s;
+    });
+  }
+  function mapaUrl(site) { return SITE.url + '/mapas/' + site.id + '.webp'; }
   function siteDe(nome) {
     var k = chave(nome);
     if (k in cacheSite) return cacheSite[k];
@@ -110,117 +98,39 @@
   function sitChip(t) { var s = sitInfo(t); return '<span class="sit sit-' + s.cls + '">' + esc(s.txt) + '</span>'; }
   function igual(a, b) { return String(a || '').trim().toLowerCase() === b.toLowerCase(); }
 
-  /* ================= cálculos (mesma lógica da planilha) ================= */
-  function calcular(bruto, dataSel) {
+  /* ================= visão (valores exatamente como estão na planilha) ================= */
+  function montarVisao(bruto) {
     var mon = bruto.monitoramento || [];
     var cad = bruto.cadastro || [];
+    var cadPor = {};
+    cad.forEach(function (c) { var k = chave(c.setor); if (!cadPor[k]) cadPor[k] = c; });
+    var regsPor = {};
+    mon.forEach(function (r) { if (!r.setor) return; var k = chave(r.setor); (regsPor[k] = regsPor[k] || []).push(r); });
 
-    // km planejado por setor (SUMIF no Cadastro)
-    var plan = {};
-    cad.forEach(function (c) { var k = chave(c.setor); plan[k] = (plan[k] || 0) + (c.km || 0); });
-
-    // colunas calculadas: P (registro atual), R (km acumulados), S/K (avanço), Q (horas)
-    var vistos = {};
-    for (var i = mon.length - 1; i >= 0; i--) {
-      var r = mon[i];
-      var ok = r.data && r.setor;
-      var kd = chave(r.setor) + '|' + r.data;
-      r.atual = ok && !vistos[kd] ? 1 : 0;
-      if (ok) vistos[kd] = 1;
-    }
-    var acum = {};
-    mon.forEach(function (r) {
-      var ok = r.data && r.setor;
-      if (!ok) { r.kmAcum = null; r.avanco = null; r.horas = null; return; }
-      var kd = chave(r.setor) + '|' + r.data;
-      acum[kd] = (acum[kd] || 0) + (r.km || 0);
-      r.kmAcum = acum[kd];
-      var p = plan[chave(r.setor)] || 0;
-      r.avanco = p ? r.kmAcum / p : 0;
-      if (r.atual === 1 && r.inicio != null) {
-        var fim = r.termino != null ? r.termino : (r.atualizacao != null ? r.atualizacao : 0);
-        r.horas = (((fim - r.inicio) % 1440) + 1440) % 1440 / 60;
-      } else r.horas = null;
-    });
-
-    var datas = {};
-    mon.forEach(function (r) { if (r.data) datas[r.data] = (datas[r.data] || 0) + 1; });
-
-    var linhas = dataSel === 'todas' ? mon : mon.filter(function (r) { return r.data === dataSel; });
-    var atuais = linhas.filter(function (r) { return r.atual === 1; });
-
-    var k = {
-      cadastrados: cad.length,
-      iniciados: atuais.filter(function (r) { return r.inicio != null; }).length,
-      concluidos: atuais.filter(function (r) { return igual(r.situacao, 'Concluído'); }).length,
-      efetivo: atuais.reduce(function (s, r) { return s + (r.efetivo || 0); }, 0),
-      veiculos: atuais.filter(function (r) { return r.placa; }).length,
-      aguardandoInstr: atuais.filter(function (r) { return igual(r.situacao, 'Aguardando instrução'); }).length,
-      avancoMedio: atuais.length ? atuais.reduce(function (s, r) { return s + (r.avanco || 0); }, 0) / atuais.length : 0,
-      emExecucao: atuais.filter(function (r) { return igual(r.situacao, 'Em execução'); }).length,
-      km: atuais.reduce(function (s, r) { return s + (r.kmAcum || 0); }, 0),
-      horas: linhas.reduce(function (s, r) { return s + (r.horas || 0); }, 0),
-      kmPlanejado: cad.reduce(function (s, c) { return s + (c.km || 0); }, 0)
-    };
-
-    // acompanhamento por setor (uma linha por setor do Cadastro)
-    var porSetor = {};
-    linhas.forEach(function (r) {
-      if (!r.setor) return;
-      var kk = chave(r.setor);
-      (porSetor[kk] = porSetor[kk] || []).push(r);
-    });
-    function linhaSetor(nome, c) {
-      var regs = porSetor[chave(nome)] || [];
-      var ult = regs[regs.length - 1] || null;
-      var av = ult ? (ult.avanco == null ? 0 : ult.avanco) : 0;
-      var sit;
-      if (!ult) sit = 'Sem registro';
-      else if (igual(ult.situacao, 'Concluído') && av < 0.9999) sit = 'Conclusão com km pendente';
-      else sit = ult.situacao || '';
-      var at = regs.filter(function (r) { return r.atual === 1; });
+    var setores = (bruto.setores || []).map(function (d) {
+      var k = chave(d.setor);
+      var regs = regsPor[k] || [];
       return {
-        nome: nome, cad: c, regs: regs, ult: ult, avanco: av, situacao: sit,
-        km: at.reduce(function (s, r) { return s + (r.kmAcum || 0); }, 0),
-        horas: at.reduce(function (s, r) { return s + (r.horas || 0); }, 0),
-        plan: plan[chave(nome)] || 0,
-        site: siteDe(nome),
-        foraCadastro: !c
+        nome: d.setor, avanco: d.avanco, situacao: d.situacao, km: d.km, horas: d.horas,
+        cad: cadPor[k] || null, plan: cadPor[k] ? cadPor[k].km : null,
+        regs: regs, ult: regs[regs.length - 1] || null,
+        site: siteDe(d.setor)
       };
-    }
-    var setores = cad.map(function (c) { return linhaSetor(c.setor, c); });
-    var noCad = {};
-    cad.forEach(function (c) { noCad[chave(c.setor)] = 1; });
-    var extras = {};
-    linhas.forEach(function (r) { var kk = chave(r.setor); if (r.setor && !noCad[kk] && !extras[kk]) extras[kk] = r.setor; });
-    Object.keys(extras).forEach(function (kk) { setores.push(linhaSetor(extras[kk], null)); });
-
-    return { k: k, setores: setores, linhas: linhas, atuais: atuais, datas: datas, plan: plan };
+    });
+    var atuais = mon.filter(function (r) { return r.atual === 1; });
+    return { k: bruto.indicadores || {}, setores: setores, linhas: mon, atuais: atuais };
   }
 
   /* ================= render ================= */
   function render() {
-    if (!estado.bruto) return;
-    if (estado.data !== 'todas' && !estado.bruto.monitoramento.some(function (r) { return r.data === estado.data; })) estado.data = 'todas';
-    estado.calc = calcular(estado.bruto, estado.data);
-    renderDatas();
+    if (!estado.bruto || !estado.bruto.indicadores) return;
+    estado.calc = montarVisao(estado.bruto);
     renderKpis();
     renderFiltros();
     renderSetores();
     renderLaterais();
     renderTabela();
     if (estado.aberto) abrirSetor(estado.aberto, true);
-  }
-
-  function renderDatas() {
-    var d = estado.calc.datas;
-    var lista = Object.keys(d).sort();
-    var h = '<button class="chip" role="tab" data-data="todas" aria-selected="' + (estado.data === 'todas') + '">Todas as datas</button>';
-    lista.forEach(function (iso) {
-      h += '<button class="chip" role="tab" data-data="' + iso + '" aria-selected="' + (estado.data === iso) + '">' +
-        dataCurta(iso) + '<small>' + dataSemana(iso) + '</small></button>';
-    });
-    $('datas').innerHTML = h;
   }
 
   function kpi(t, v, sub, extra, cls) {
@@ -234,35 +144,35 @@
 
   function renderKpis() {
     var c = estado.calc, k = c.k;
-    var concl = c.atuais.filter(function (r) { return igual(r.situacao, 'Concluído'); })
-      .sort(function (a, b) { return (b.termino || -1) - (a.termino || -1); });
+    var concl = c.atuais.filter(function (r) { return igual(r.situacao, 'Concluído') && r.termino != null; })
+      .sort(function (a, b) { return (b.data + hhmm(b.termino)) < (a.data + hhmm(a.termino)) ? -1 : 1; });
     var ultConcl = concl[0];
-    var tipos = {};
-    c.atuais.forEach(function (r) { if (r.placa) { var t = r.tipo || 'Sem tipo'; tipos[t] = (tipos[t] || 0) + 1; } });
-    var tiposTxt = Object.keys(tipos).sort().map(function (t) { return tipos[t] + ' ' + t; }).join(' · ');
 
     var h = '';
     h += kpi('Setores iniciados', nf(k.iniciados) + '<small>/ ' + nf(k.cadastrados) + '</small>',
-      nf(k.emExecucao) + ' em execução agora', trilho(k.cadastrados ? k.iniciados / k.cadastrados : 0));
+      nf(k.emExecucao) + ' em execução', trilho(k.cadastrados ? k.iniciados / k.cadastrados : 0));
     h += kpi('Setores concluídos', nf(k.concluidos),
-      ultConcl ? 'Último: ' + esc(rotuloCurto(ultConcl.setor)) + ' às ' + hhmm(ultConcl.termino) : 'Nenhum concluído');
-    h += kpi('Avanço médio', nf(k.avancoMedio * 100, 0) + '<small>%</small>',
-      'Média dos setores', trilho(k.avancoMedio));
+      ultConcl ? 'Último: ' + esc(rotuloCurto(ultConcl.setor)) + ' às ' + hhmm(ultConcl.termino) : 'Com horário de término');
+    h += kpi('Avanço médio', pctTxt(k.avancoMedio), 'Média geral dos setores', trilho(k.avancoMedio));
     h += kpi('Efetivo em campo', nf(k.efetivo), 'Agentes e varredores');
-    h += kpi('Veículos', nf(k.veiculos), tiposTxt || 'Nenhuma placa informada');
-    h += kpi('Aguardando instrução', nf(k.aguardandoInstr), k.aguardandoInstr ? 'Equipes livres para apoio' : 'Nenhuma equipe livre',
+    h += kpi('Veículos', nf(k.veiculos), 'Placas registradas');
+    h += kpi('Aguardando instrução', nf(k.aguardandoInstr), 'Equipes livres para apoio',
       '', 'alerta' + (k.aguardandoInstr ? ' ativo' : ''));
     $('kpis').innerHTML = h;
 
     $('kpis2').innerHTML =
-      '<span><b>' + nf(k.km, 2) + '</b>km executados de ' + nf(k.kmPlanejado, 2) + ' km planejados</span>' +
-      '<span><b>' + horas(k.horas) + '</b>de operação (soma dos setores)</span>' +
+      '<span><b>' + nf(k.km, 2) + '</b>km totais executados</span>' +
+      '<span><b>' + nf(k.horas, 2) + '</b>horas totais de operação</span>' +
       '<span><b>' + nf(k.emExecucao) + '</b>setores em execução</span>' +
       '<span><b>' + nf(k.cadastrados) + '</b>setores cadastrados</span>';
   }
+  function pctTxt(v) {
+    if (v == null) return '—';
+    return nf(v * 100, 1) + '<small>%</small>';
+  }
 
-  var ORDEM_FILTRO = ['Em execução', 'Concluído', 'Aguardando instrução', 'Aguardando', 'Remanejado', 'Conclusão com km pendente', 'Sem situação', 'Sem registro'];
-  function rotuloSit(s) { return sitInfo(s).txt; }
+  var ORDEM_FILTRO = ['Em execução', 'Concluído', 'Aguardando instrução', 'Aguardando', 'Remanejado', 'Conclusão com km pendente', 'Sem registro', 'Em branco'];
+  function rotuloSit(s) { return s ? sitInfo(s).txt : 'Em branco'; }
 
   function renderFiltros() {
     var cont = {};
@@ -292,46 +202,37 @@
       return true;
     });
 
-    // agrupa por evento do Caderno
+    // agrupa pelo evento do Caderno de Operação, mantendo a ordem da planilha
     var grupos = [], idx = {};
     vis.forEach(function (s) {
-      var g = s.foraCadastro ? '~fora' : s.site ? 'ev' + String(s.site.ev).padStart(2, '0') : '~outros';
+      var g = s.site ? 'ev' + s.site.ev : 'outros';
       if (!(g in idx)) {
         idx[g] = grupos.length;
-        grupos.push({
-          id: g,
-          nome: s.foraCadastro ? 'Setores fora do Cadastro' : s.site ? s.site.evento : 'Outros setores',
-          data: s.site && !s.foraCadastro ? s.site.evData : '',
-          itens: []
-        });
+        grupos.push({ nome: s.site ? s.site.evento : 'Outros setores', data: s.site ? s.site.evData : '', itens: [] });
       }
       grupos[idx[g]].itens.push(s);
     });
-    grupos.sort(function (a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; });
 
     if (!vis.length) { $('setores').innerHTML = '<div class="vazio">Nenhum setor encontrado.</div>'; return; }
 
     var h = '<div class="cab-col"><span>Setor</span><span></span><span>Avanço</span><span class="r">Km exec. / plan.</span><span class="r c-h">Horas</span><span>Situação</span></div>';
     grupos.forEach(function (g) {
-      var med = g.itens.reduce(function (s, x) { return s + Math.min(1, x.avanco || 0); }, 0) / g.itens.length;
-      var conc = g.itens.filter(function (x) { return igual(x.situacao, 'Concluído'); }).length;
       h += '<div class="grupo"><div class="grupo-cab"><h3>' + esc(g.nome) + '</h3>' +
-        (g.data ? '<span class="gdat">' + esc(g.data) + '</span>' : '') +
-        '<span class="gres">' + conc + '/' + g.itens.length + ' concluídos ' + trilho(med) + ' ' + nf(med * 100, 0) + '%</span></div>';
+        (g.data ? '<span class="gdat">' + esc(g.data) + '</span>' : '') + '</div>';
       g.itens.forEach(function (s) {
         var si = sitInfo(s.situacao);
         var u = s.ult;
         var enc = (u && u.encarregado) || (s.cad && s.cad.encarregado) || '';
         var det = [enc, u && u.local].filter(Boolean).join(' · ') || (s.site ? s.site.titulo : '');
-        var quando = u ? (u.termino != null && si.cls === 'conc' ? 'Término ' + hhmm(u.termino) :
+        var quando = u ? (u.termino != null ? 'Término ' + hhmm(u.termino) :
           u.atualizacao != null ? 'Atualizado ' + hhmm(u.atualizacao) : u.inicio != null ? 'Início ' + hhmm(u.inicio) : '') : '';
         h += '<button class="setor" type="button" data-setor="' + esc(s.nome) + '">' +
           '<span class="cod' + (s.site ? '' : ' sem-mapa') + '" title="' + esc(s.nome) + '">' + esc(rotuloCurto(s.nome)) + '</span>' +
           '<span class="s-nome"><b>' + esc(s.nome) + '</b><span>' + esc(det || '—') + '</span></span>' +
-          '<span class="s-av">' + trilho(s.avanco, 'f-' + si.cls) + '<em>' + nf((s.avanco || 0) * 100, 0) + '%</em></span>' +
-          '<span class="s-km"><b>' + nf(s.km, 2) + '</b> / ' + nf(s.plan, 2) + '</span>' +
-          '<span class="s-h c-h"><b>' + (s.horas ? horas(s.horas) : '—') + '</b></span>' +
-          '<span class="s-sit">' + sitChip(s.situacao) + (quando ? '<small>' + quando + '</small>' : '') + '</span>' +
+          '<span class="s-av">' + trilho(s.avanco, 'f-' + si.cls) + '<em>' + pct(s.avanco) + '</em></span>' +
+          '<span class="s-km"><b>' + nf(s.km, 2) + '</b>' + (s.plan != null ? ' / ' + nf(s.plan, 2) : '') + '</span>' +
+          '<span class="s-h c-h"><b>' + (s.horas == null ? '—' : nf(s.horas, 2)) + '</b></span>' +
+          '<span class="s-sit">' + (s.situacao ? sitChip(s.situacao) : '<span class="sit sit-sem">—</span>') + (quando ? '<small>' + quando + '</small>' : '') + '</span>' +
           '</button>';
       });
       h += '</div>';
@@ -353,39 +254,37 @@
 
   function renderLaterais() {
     var at = estado.calc.atuais;
+    var k = estado.calc.k;
 
-    // aguardando instrução
-    var ag = at.filter(function (r) { return igual(r.situacao, 'Aguardando instrução'); })
-      .sort(function (a, b) { return (b.atualizacao || 0) - (a.atualizacao || 0); });
-    $('c-aguard').textContent = ag.length;
+    // aguardando instrução (mesmo critério do indicador da planilha)
+    var ag = at.filter(function (r) { return igual(r.situacao, 'Aguardando instrução'); }).reverse();
+    $('c-aguard').textContent = nf(k.aguardandoInstr);
     var x = cortar(ag, 6, 'ag');
     $('l-aguard').innerHTML = ag.length ? x.itens.map(function (r) {
-      var sub = [r.encarregado, r.local].filter(Boolean).join(' · ');
-      return item(r, nf(r.efetivo || 0) + '<small>efetivo</small>',
-        (sub ? '<span>' + esc(sub) + '</span>' : '') + (r.ocorrencias ? '<p>' + esc(r.ocorrencias) + '</p>' : ''));
+      var sub = [dataCurta(r.data), r.encarregado, r.local].filter(Boolean).join(' · ');
+      return item(r, (r.efetivo == null ? '—' : nf(r.efetivo)) + '<small>efetivo</small>',
+        '<span>' + esc(sub) + '</span>' + (r.ocorrencias ? '<p>' + esc(r.ocorrencias) + '</p>' : ''));
     }).join('') + x.botao : '<div class="vazio">Nenhuma equipe aguardando instrução.</div>';
 
     // concluídos
-    var co = at.filter(function (r) { return igual(r.situacao, 'Concluído'); })
-      .sort(function (a, b) { return (b.termino == null ? -1 : b.termino) - (a.termino == null ? -1 : a.termino); });
-    $('c-concl').textContent = co.length;
+    var co = at.filter(function (r) { return igual(r.situacao, 'Concluído'); }).reverse();
+    $('c-concl').textContent = nf(k.concluidos);
     x = cortar(co, 6, 'co');
     $('l-concl').innerHTML = co.length ? x.itens.map(function (r) {
-      var sub = (estado.data === 'todas' ? dataCurta(r.data) + ' · ' : '') + 'Início ' + hhmm(r.inicio) + (r.horas != null ? ' · ' + horas(r.horas) : '');
+      var sub = dataCurta(r.data) + ' · Início ' + hhmm(r.inicio) + (r.horas != null ? ' · ' + nf(r.horas, 2) + ' h' : '');
       return item(r, hhmm(r.termino) + '<small>término</small>', '<span>' + esc(sub) + '</span>');
     }).join('') + x.botao : '<div class="vazio">Nenhum setor concluído.</div>';
 
-    // veículos
-    var ve = at.filter(function (r) { return r.placa || r.tipo; })
-      .sort(function (a, b) { return chave(a.setor) < chave(b.setor) ? -1 : 1; });
-    $('c-veic').textContent = at.filter(function (r) { return r.placa; }).length;
+    // veículos (linhas atuais com placa, mesmo critério do indicador)
+    var ve = at.filter(function (r) { return r.placa; });
+    $('c-veic').textContent = nf(k.veiculos);
     x = cortar(ve, 6, 've');
     $('l-veic').innerHTML = ve.length ? x.itens.map(function (r) {
-      return item(r, r.placa ? '<span class="placa">' + esc(r.placa.toUpperCase()) + '</span>' : '<small>sem placa</small>',
-        '<span>' + esc(r.tipo || 'Tipo não informado') + '</span>');
-    }).join('') + x.botao : '<div class="vazio">Nenhum veículo informado.</div>';
+      return item(r, '<span class="placa">' + esc(r.placa) + '</span>',
+        '<span>' + esc([r.tipo, dataCurta(r.data)].filter(Boolean).join(' · ')) + '</span>');
+    }).join('') + x.botao : '<div class="vazio">Nenhum veículo registrado.</div>';
 
-    // ocorrências / apoios (todos os registros, mais recentes primeiro)
+    // ocorrências / apoios (todas as linhas, da mais recente para a mais antiga)
     var oc = estado.calc.linhas.filter(function (r) { return r.ocorrencias; }).slice().reverse();
     $('c-ocor').textContent = oc.length;
     x = cortar(oc, 5, 'oc');
@@ -396,6 +295,8 @@
     }).join('') + x.botao : '<div class="vazio">Nenhuma ocorrência registrada.</div>';
   }
 
+  function vazio(v, f) { return v == null || v === '' ? '' : f(v); }
+
   function renderTabela() {
     var l = estado.calc.linhas.slice().reverse();
     var b = semAcento(estado.busca.trim()).toLowerCase();
@@ -403,28 +304,32 @@
       return semAcento([r.setor, r.encarregado, r.local, r.placa, r.ocorrencias, r.fonte, r.situacao].join(' ')).toLowerCase().indexOf(b) >= 0;
     });
     $('c-reg').textContent = l.length + (l.length === 1 ? ' registro' : ' registros');
-    var cab = ['Data', 'Setor', 'Encarregado', 'Efetivo', 'Veículo', 'Placa', 'Início real', 'Últ. atualização', 'Localização / rua',
-      'Km exec.', 'Km acum.', 'Avanço', 'Término', 'Situação', 'Ocorrências / apoios', 'Fonte / responsável', 'Horas'];
+    var cab = ['Data', 'Setor', 'Encarregado', 'Efetivo', 'Tipo de veículo', 'Placa', 'Início real', 'Última atualização', 'Localização / rua',
+      'Km executados', 'Avanço (%)', 'Término real', 'Situação', 'Ocorrências / apoios', 'Fonte / responsável',
+      'Registro atual', 'Horas de operação', 'Km acumulados', 'Avanço acumulado (%)'];
     var h = '<thead><tr>' + cab.map(function (c) { return '<th>' + c + '</th>'; }).join('') + '</tr></thead><tbody>';
+    var f2 = function (v) { return nf(v, 2); };
     l.slice(0, estado.limiteTabela).forEach(function (r) {
-      h += '<tr class="' + (r.atual === 1 ? 'atual' : '') + '" data-setor="' + esc(r.setor) + '" title="Linha ' + r.l + ' da planilha' + (r.atual === 1 ? ' · registro atual' : '') + '">' +
-        '<td class="nw">' + dataCurta(r.data) + '</td>' +
+      h += '<tr class="' + (r.atual === 1 ? 'atual' : '') + '" data-setor="' + esc(r.setor) + '" title="Linha ' + r.l + ' da planilha">' +
+        '<td class="nw">' + (r.data ? dataCurta(r.data) : '') + '</td>' +
         '<td class="nw"><b>' + esc(r.setor) + '</b></td>' +
         '<td>' + esc(r.encarregado) + '</td>' +
-        '<td class="n">' + (r.efetivo == null ? '' : nf(r.efetivo)) + '</td>' +
+        '<td class="n">' + vazio(r.efetivo, nf) + '</td>' +
         '<td>' + esc(r.tipo) + '</td>' +
         '<td class="nw">' + esc(r.placa) + '</td>' +
-        '<td class="n">' + (r.inicio == null ? '' : hhmm(r.inicio)) + '</td>' +
-        '<td class="n">' + (r.atualizacao == null ? '' : hhmm(r.atualizacao)) + '</td>' +
+        '<td class="n">' + vazio(r.inicio, hhmm) + '</td>' +
+        '<td class="n">' + vazio(r.atualizacao, hhmm) + '</td>' +
         '<td class="txt">' + esc(r.local) + '</td>' +
-        '<td class="n">' + (r.km == null ? '' : nf(r.km, 2)) + '</td>' +
-        '<td class="n">' + (r.kmAcum == null ? '' : nf(r.kmAcum, 2)) + '</td>' +
-        '<td class="n">' + (r.avanco == null ? '' : pct(r.avanco)) + '</td>' +
-        '<td class="n">' + (r.termino == null ? '' : hhmm(r.termino)) + '</td>' +
+        '<td class="n">' + vazio(r.km, f2) + '</td>' +
+        '<td class="n">' + vazio(r.avanco, pct) + '</td>' +
+        '<td class="n">' + vazio(r.termino, hhmm) + '</td>' +
         '<td class="nw">' + (r.situacao ? sitChip(r.situacao) : '') + '</td>' +
         '<td class="txt">' + esc(r.ocorrencias) + '</td>' +
         '<td>' + esc(r.fonte) + '</td>' +
-        '<td class="n">' + (r.horas == null ? '' : horas(r.horas)) + '</td>' +
+        '<td class="n">' + vazio(r.atual, nf) + '</td>' +
+        '<td class="n">' + vazio(r.horas, f2) + '</td>' +
+        '<td class="n">' + vazio(r.kmAcum, f2) + '</td>' +
+        '<td class="n">' + vazio(r.avancoAcum, pct) + '</td>' +
         '</tr>';
     });
     if (!l.length) h += '<tr><td colspan="' + cab.length + '" class="vazio">Nenhum registro.</td></tr>';
@@ -445,13 +350,13 @@
       '<h2 id="g-tit">' + esc(s.nome) + '</h2>' +
       '<p>' + esc(site ? [site.titulo, site.quando].filter(Boolean).join(' — ') : '') + '</p></div>';
 
-    h += '<div class="g-sec"><div class="g-av"><span class="big">' + nf((s.avanco || 0) * 100, 0) + '%</span>' + trilho(s.avanco, 'f-' + si.cls) + sitChip(s.situacao) + '</div>';
+    h += '<div class="g-sec"><div class="g-av"><span class="big">' + pct(s.avanco) + '</span>' + trilho(s.avanco, 'f-' + si.cls) + (s.situacao ? sitChip(s.situacao) : '') + '</div>';
     h += '<div class="g-grid">' +
-      gi('Km executados', nf(s.km, 2) + ' km') +
-      gi('Extensão planejada', nf(s.plan, 2) + ' km') +
-      gi('Horas de operação', s.horas ? horas(s.horas) : '—') +
+      gi('Km total executado', s.km == null ? '—' : nf(s.km, 2) + ' km') +
+      gi('Extensão planejada', s.plan == null ? '—' : nf(s.plan, 2) + ' km') +
+      gi('Horas de operação', s.horas == null ? '—' : nf(s.horas, 2)) +
       gi('Efetivo', u && u.efetivo != null ? nf(u.efetivo) : '—') +
-      gi('Veículo', u && (u.tipo || u.placa) ? [u.tipo, u.placa && u.placa.toUpperCase()].filter(Boolean).join(' · ') : '—') +
+      gi('Veículo', u && (u.tipo || u.placa) ? [u.tipo, u.placa].filter(Boolean).join(' · ') : '—') +
       gi('Encarregado', (u && u.encarregado) || '—') +
       gi('Início real', u ? hhmm(u.inicio) : '—') +
       gi('Última atualização', u ? hhmm(u.atualizacao) : '—') +
@@ -469,20 +374,28 @@
         '</div></div>';
     }
 
+    var eq = site ? SITE.equipe[site.id] || [] : [];
+    if (eq.length) {
+      h += '<div class="g-sec"><h3>Equipe escalada</h3><div class="pessoas">' + eq.map(function (p) {
+        return pessoa('Supervisor', p.sup, p.supFone) + pessoa('Encarregado', p.enc, p.encFone);
+      }).join('') + '</div></div>';
+    }
+
     if (site) {
       h += '<div class="g-sec"><h3>Mapa do setor</h3>' +
-        '<button class="g-mapa" type="button" data-zoom="mapas/' + site.id + '.webp" aria-label="Ampliar mapa">' +
-        '<img src="mapas/' + site.id + '.webp" alt="Mapa do ' + esc(site.titulo) + '" loading="lazy" decoding="async"></button>' +
+        '<button class="g-mapa" type="button" data-zoom="' + esc(mapaUrl(site)) + '" aria-label="Ampliar mapa">' +
+        '<img src="' + esc(mapaUrl(site)) + '" alt=""Mapa do ' + esc(site.titulo) + '" loading="lazy" decoding="async"></button>' +
         '<div class="g-links">' +
         (site.mymaps ? '<a href="' + esc(mapsViewer(site.mymaps)) + '" target="_blank" rel="noopener">Abrir no Google Maps ↗</a>' : '') +
-        '<a href="mapas/' + site.id + '.webp" target="_blank" rel="noopener">Imagem em tela cheia ↗</a>' +
+        '<a href="' + esc(mapaUrl(site)) + '" target="_blank" rel="noopener">Imagem em tela cheia ↗</a>' +
+        '<a href="' + esc(SITE.url + '/#/setor:' + site.id) + '" target="_blank" rel="noopener">Ver no Caderno de Operação ↗</a>' +
         '</div>' +
         (site.local ? '<div class="g-grid" style="margin-top:12px">' + gi('Local de concentração', site.local, true) +
           gi('Equipamentos previstos', site.equip || '—') + gi('Agentes previstos', site.agentes || '—') + '</div>' : '') +
         '</div>';
     }
 
-    h += '<div class="g-sec"><h3>Histórico de registros' + (estado.data !== 'todas' ? ' · ' + dataCurta(estado.data) : '') + '</h3>';
+    h += '<div class="g-sec"><h3>Monitoramento</h3>';
     if (s.regs.length) {
       h += '<div class="hist">' + s.regs.slice().reverse().map(function (r) {
         var q = r.atualizacao != null ? r.atualizacao : r.inicio;
@@ -493,10 +406,27 @@
           (r.local ? '<p>' + esc(r.local) + '</p>' : '') +
           (r.ocorrencias ? '<p><b>Ocorrência:</b> ' + esc(r.ocorrencias) + '</p>' : '') +
           (r.fonte ? '<p>' + esc(r.fonte) + '</p>' : '') + '</span>' +
-          '<span class="hist-k"><b>' + (r.avanco == null ? '—' : pct(r.avanco)) + '</b>+' + nf(r.km || 0, 2) + ' km<br>' + nf(r.kmAcum || 0, 2) + ' acum.</span></div>';
+          '<span class="hist-k"><b>' + (r.avanco == null ? '—' : pct(r.avanco)) + '</b>' + (r.km == null ? '' : nf(r.km, 2) + ' km exec.<br>') + (r.kmAcum == null ? '' : nf(r.kmAcum, 2) + ' km acum.') + '</span></div>';
       }).join('') + '</div>';
     } else h += '<div class="vazio" style="text-align:left;padding:4px 0">Sem registros.</div>';
     h += '</div>';
+
+    var rc = site ? SITE.registros[site.id] || [] : [];
+    if (site) {
+      h += '<div class="g-sec"><h3>Registros de campo</h3>';
+      if (rc.length) {
+        h += '<div class="hist">' + rc.map(function (r) {
+          var quem = [r.nome, r.funcao, r.agentes ? r.agentes + ' agente(s)' : ''].filter(Boolean).join(' · ');
+          var dia = (r.carimbo.match(/^(\d{1,2}\/\d{1,2})/) || [])[1] || '';
+          return '<div class="hist-i"><span class="hist-h">' + esc(r.hora || '—') + '<small>' + esc(dia) + '</small></span>' +
+            '<span class="hist-c"><b>' + esc(r.momento) + '</b>' + (quem ? '<p>' + esc(quem) + '</p>' : '') +
+            (r.obs ? '<p>' + esc(r.obs) + '</p>' : '') +
+            (r.fotos.length ? '<p>' + r.fotos.map(function (u, i) { return '<a href="' + esc(u) + '" target="_blank" rel="noopener">Foto ' + (i + 1) + '</a>'; }).join(' · ') + '</p>' : '') +
+            '</span><span></span></div>';
+        }).join('') + '</div>';
+      } else h += '<div class="vazio" style="text-align:left;padding:4px 0">Nenhum registro de campo para este setor.</div>';
+      h += '</div>';
+    }
 
     if (site && site.trechos && site.trechos.length) {
       h += '<details class="g-sec"><summary>Logradouros do percurso (' + site.trechos.length + ')</summary><table class="trechos">' +
@@ -511,6 +441,14 @@
       document.body.style.overflow = 'hidden';
       $('g-fechar').focus();
     }
+  }
+  function pessoa(funcao, nome, fone) {
+    if (!nome) return '';
+    var n = String(fone || '').replace(/\D/g, '');
+    var wa = n.length >= 10 ? (n.length <= 11 ? '55' + n : n) : '';
+    return '<div class="pessoa"><span>' + funcao + '</span><b>' + esc(nome) + '</b>' +
+      (fone ? '<em>' + (n.length >= 8 ? '<a href="tel:' + n + '">' + esc(fone) + '</a>' : esc(fone)) +
+        (wa ? ' · <a href="https://wa.me/' + wa + '" target="_blank" rel="noopener">WhatsApp</a>' : '') + '</em>' : '') + '</div>';
   }
   function gi(t, v, largo, html) {
     return '<div' + (largo ? ' style="grid-column:1/-1"' : '') + '><span>' + t + '</span><b>' + (html ? v : esc(v)) + '</b></div>';
@@ -557,6 +495,18 @@
       });
   }
 
+  function carregarSite() {
+    fetch('/api/site?t=' + Math.floor(Date.now() / 30000), { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j || !j.ok) return;
+        indexarSite(j);
+        gravarLocal(CHAVE_SITE, JSON.stringify(j));
+        render();
+      })
+      .catch(function () {});
+  }
+
   function verificarAtraso() {
     if (!estado.ultimaOk) return;
     var seg = (Date.now() - estado.ultimaOk) / 1000;
@@ -566,8 +516,6 @@
   /* ================= eventos ================= */
   document.addEventListener('click', function (e) {
     var t = e.target;
-    var d = t.closest('[data-data]');
-    if (d) { estado.data = d.getAttribute('data-data'); gravarLocal(CHAVE_DATA, estado.data); estado.limiteTabela = PASSO_TABELA; render(); return; }
     var f = t.closest('[data-filtro]');
     if (f) { estado.filtro = f.getAttribute('data-filtro'); renderFiltros(); renderSetores(); return; }
     var m = t.closest('[data-mais]');
@@ -585,7 +533,7 @@
     if (e.key !== 'Escape') return;
     if (!$('zoom').hidden) $('zoom').hidden = true; else if (!$('gaveta').hidden) fecharSetor();
   });
-  $('btn-at').addEventListener('click', carregar);
+  $('btn-at').addEventListener('click', function () { carregar(); carregarSite(); });
   $('mais-reg').addEventListener('click', function () { estado.limiteTabela += PASSO_TABELA * 2; renderTabela(); });
   var tBusca;
   $('busca').addEventListener('input', function () {
@@ -598,6 +546,7 @@
   });
 
   /* ================= início ================= */
+  try { var sSalvo = lerLocal(CHAVE_SITE); if (sSalvo) indexarSite(JSON.parse(sSalvo)); } catch (e) {}
   var salvo = lerLocal(CHAVE_CACHE);
   if (salvo) {
     try {
@@ -607,5 +556,7 @@
     } catch (e) {}
   }
   carregar();
+  carregarSite();
   setInterval(function () { if (!document.hidden) carregar(); verificarAtraso(); }, INTERVALO);
+  setInterval(function () { if (!document.hidden) carregarSite(); }, INTERVALO_SITE);
 })();
