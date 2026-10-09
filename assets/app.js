@@ -8,7 +8,7 @@
   var CHAVE_SITE = 'painel-cirio-2026:site';
   var INTERVALO_SITE = 60000;
   var SITE = { url: '', setores: [], equipe: {}, registros: {} };
-  var $ = function (id) { return document.getElementById(id); };
+  var $ = function (id) { return document.getElementById(id) || document.createElement('div'); };
 
   var estado = {
     bruto: null,          // resposta da API
@@ -22,6 +22,7 @@
   };
 
   /* ================= utilidades ================= */
+  function html(id, h) { var el = document.getElementById(id); if (el) el.innerHTML = h; }
   function lerLocal(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
   function gravarLocal(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
   function esc(s) {
@@ -158,7 +159,7 @@
     h += kpi('Veículos', nf(k.veiculos), 'Placas registradas');
     h += kpi('Aguardando instrução', nf(k.aguardandoInstr), 'Equipes livres para apoio',
       '', 'alerta' + (k.aguardandoInstr ? ' ativo' : ''));
-    $('kpis').innerHTML = h;
+    html('kpis', h);
 
     $('kpis2').innerHTML =
       '<span><b>' + nf(k.km, 2) + '</b>km totais executados</span>' +
@@ -184,7 +185,7 @@
     chaves.forEach(function (t) {
       h += '<button class="chip" data-filtro="' + esc(t) + '" aria-pressed="' + (estado.filtro === t) + '">' + esc(t) + '<small>' + cont[t] + '</small></button>';
     });
-    $('filtros').innerHTML = h;
+    html('filtros', h);
   }
 
   function textoBusca(s) {
@@ -213,7 +214,7 @@
       grupos[idx[g]].itens.push(s);
     });
 
-    if (!vis.length) { $('setores').innerHTML = '<div class="vazio">Nenhum setor encontrado.</div>'; return; }
+    if (!vis.length) { html('setores', '<div class="vazio">Nenhum setor encontrado.</div>'); return; }
 
     var h = '<div class="cab-col"><span>Setor</span><span></span><span>Avanço</span><span class="r">Km exec. / plan.</span><span class="r c-h">Horas</span><span>Situação</span></div>';
     grupos.forEach(function (g) {
@@ -237,7 +238,7 @@
       });
       h += '</div>';
     });
-    $('setores').innerHTML = h;
+    html('setores', h);
   }
 
   function item(r, direita, extra) {
@@ -260,39 +261,39 @@
     var ag = at.filter(function (r) { return igual(r.situacao, 'Aguardando instrução'); }).reverse();
     $('c-aguard').textContent = nf(k.aguardandoInstr);
     var x = cortar(ag, 6, 'ag');
-    $('l-aguard').innerHTML = ag.length ? x.itens.map(function (r) {
+    html('l-aguard', ag.length ? x.itens.map(function (r) {
       var sub = [dataCurta(r.data), r.encarregado, r.local].filter(Boolean).join(' · ');
       return item(r, (r.efetivo == null ? '—' : nf(r.efetivo)) + '<small>efetivo</small>',
         '<span>' + esc(sub) + '</span>' + (r.ocorrencias ? '<p>' + esc(r.ocorrencias) + '</p>' : ''));
-    }).join('') + x.botao : '<div class="vazio">Nenhuma equipe aguardando instrução.</div>';
+    }).join('') + x.botao : '<div class="vazio">Nenhuma equipe aguardando instrução.</div>');
 
     // concluídos
     var co = at.filter(function (r) { return igual(r.situacao, 'Concluído'); }).reverse();
     $('c-concl').textContent = nf(k.concluidos);
     x = cortar(co, 6, 'co');
-    $('l-concl').innerHTML = co.length ? x.itens.map(function (r) {
+    html('l-concl', co.length ? x.itens.map(function (r) {
       var sub = dataCurta(r.data) + ' · Início ' + hhmm(r.inicio) + (r.horas != null ? ' · ' + nf(r.horas, 2) + ' h' : '');
       return item(r, hhmm(r.termino) + '<small>término</small>', '<span>' + esc(sub) + '</span>');
-    }).join('') + x.botao : '<div class="vazio">Nenhum setor concluído.</div>';
+    }).join('') + x.botao : '<div class="vazio">Nenhum setor concluído.</div>');
 
     // veículos (linhas atuais com placa, mesmo critério do indicador)
     var ve = at.filter(function (r) { return r.placa; });
     $('c-veic').textContent = nf(k.veiculos);
     x = cortar(ve, 6, 've');
-    $('l-veic').innerHTML = ve.length ? x.itens.map(function (r) {
+    html('l-veic', ve.length ? x.itens.map(function (r) {
       return item(r, '<span class="placa">' + esc(r.placa) + '</span>',
         '<span>' + esc([r.tipo, dataCurta(r.data)].filter(Boolean).join(' · ')) + '</span>');
-    }).join('') + x.botao : '<div class="vazio">Nenhum veículo registrado.</div>';
+    }).join('') + x.botao : '<div class="vazio">Nenhum veículo registrado.</div>');
 
     // ocorrências / apoios (todas as linhas, da mais recente para a mais antiga)
     var oc = estado.calc.linhas.filter(function (r) { return r.ocorrencias; }).slice().reverse();
     $('c-ocor').textContent = oc.length;
     x = cortar(oc, 5, 'oc');
-    $('l-ocor').innerHTML = oc.length ? x.itens.map(function (r) {
+    html('l-ocor', oc.length ? x.itens.map(function (r) {
       var q = r.atualizacao != null ? r.atualizacao : r.inicio;
       return item(r, hhmm(q) + '<small>' + dataCurta(r.data) + '</small>',
         (r.fonte ? '<span>' + esc(r.fonte) + '</span>' : '') + '<p>' + esc(r.ocorrencias) + '</p>');
-    }).join('') + x.botao : '<div class="vazio">Nenhuma ocorrência registrada.</div>';
+    }).join('') + x.botao : '<div class="vazio">Nenhuma ocorrência registrada.</div>');
   }
 
   function vazio(v, f) { return v == null || v === '' ? '' : f(v); }
@@ -333,7 +334,7 @@
         '</tr>';
     });
     if (!l.length) h += '<tr><td colspan="' + cab.length + '" class="vazio">Nenhum registro.</td></tr>';
-    $('tab-reg').innerHTML = h + '</tbody>';
+    html('tab-reg', h + '</tbody>');
     var resta = l.length - estado.limiteTabela;
     $('mais-reg').hidden = resta <= 0;
     $('mais-reg').textContent = 'Mostrar mais (' + Math.max(0, resta) + ')';
@@ -435,7 +436,7 @@
         }).join('') + '</table></details>';
     }
 
-    $('g-corpo').innerHTML = h;
+    html('g-corpo', h);
     if (!silencioso || $('gaveta').hidden) {
       $('gaveta').hidden = false; $('gaveta-fundo').hidden = false;
       document.body.style.overflow = 'hidden';
