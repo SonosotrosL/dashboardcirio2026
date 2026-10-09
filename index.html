@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#202F59">
+<meta name="robots" content="noindex">
+<title>Painel Operacional — Círio de Nazaré 2026</title>
+<link rel="icon" type="image/png" href="assets/logo-belemlimpa.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,400;0,500;0,600;0,700;0,800;1,700;1,800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<header class="topo">
+  <div class="topo-in">
+    <div class="topo-tit">
+      <span class="rotulo">Painel operacional · Varrição e limpeza</span>
+      <h1>Círio de Nazaré 2026</h1>
+    </div>
+    <div class="logos">
+      <img src="assets/logo-prefeitura.png" alt="Prefeitura de Belém" height="40">
+      <img src="assets/logo-belemlimpa.png" alt="Concessionária Belém Limpa" height="46">
+    </div>
+  </div>
+  <div class="faixa"><span></span></div>
+</header>
+
+<div class="barra">
+  <div class="barra-in">
+    <div class="datas" id="datas" role="tablist" aria-label="Data da operação"></div>
+    <div class="vivo">
+      <span class="pulso" id="pulso" aria-hidden="true"></span>
+      <span id="status-txt">Carregando…</span>
+      <button class="btn-at" id="btn-at" type="button" title="Atualizar agora">
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M17.65 6.35A7.95 7.95 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+        <span>Atualizar</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<main class="pag">
+  <div class="erro" id="erro" hidden></div>
+
+  <section class="kpis" id="kpis" aria-label="Indicadores"></section>
+  <section class="kpis-2" id="kpis2" aria-label="Indicadores complementares"></section>
+
+  <div class="grade">
+    <section class="painel painel-setores" aria-labelledby="t-setores">
+      <div class="painel-cab">
+        <div>
+          <span class="rotulo">Acompanhamento por setor</span>
+          <h2 id="t-setores">Avanço por setor</h2>
+        </div>
+        <input class="busca" id="busca" type="search" placeholder="Buscar setor, encarregado, rua…" aria-label="Buscar setor">
+      </div>
+      <div class="filtros" id="filtros" role="group" aria-label="Filtrar por situação"></div>
+      <div id="setores"></div>
+    </section>
+
+    <aside class="lateral">
+      <section class="painel" aria-labelledby="t-aguard">
+        <div class="painel-cab compacto"><div><span class="rotulo">Equipes livres para apoio</span><h2 id="t-aguard">Aguardando instrução</h2></div><span class="cont" id="c-aguard"></span></div>
+        <div id="l-aguard" class="lista"></div>
+      </section>
+      <section class="painel" aria-labelledby="t-concl">
+        <div class="painel-cab compacto"><div><span class="rotulo">Com horário de término</span><h2 id="t-concl">Setores concluídos</h2></div><span class="cont" id="c-concl"></span></div>
+        <div id="l-concl" class="lista"></div>
+      </section>
+      <section class="painel" aria-labelledby="t-veic">
+        <div class="painel-cab compacto"><div><span class="rotulo">Tipo e placa por setor</span><h2 id="t-veic">Veículos</h2></div><span class="cont" id="c-veic"></span></div>
+        <div id="l-veic" class="lista"></div>
+      </section>
+      <section class="painel" aria-labelledby="t-ocor">
+        <div class="painel-cab compacto"><div><span class="rotulo">Registros mais recentes</span><h2 id="t-ocor">Ocorrências e apoios</h2></div><span class="cont" id="c-ocor"></span></div>
+        <div id="l-ocor" class="lista"></div>
+      </section>
+    </aside>
+  </div>
+
+  <section class="painel" aria-labelledby="t-reg">
+    <div class="painel-cab">
+      <div><span class="rotulo">Aba Monitoramento</span><h2 id="t-reg">Registros</h2></div>
+      <span class="cont" id="c-reg"></span>
+    </div>
+    <div class="tabela-wrap"><table class="tabela" id="tab-reg"></table></div>
+    <button class="mais" id="mais-reg" type="button" hidden>Mostrar mais</button>
+  </section>
+</main>
+
+<footer class="rodape">
+  <span><strong>Caderno de Operação</strong> — Círio de Nazaré 2026</span>
+  <span id="rod-fonte"></span>
+</footer>
+
+<div class="gaveta-fundo" id="gaveta-fundo" hidden></div>
+<aside class="gaveta" id="gaveta" role="dialog" aria-modal="true" aria-labelledby="g-tit" hidden>
+  <button class="g-fechar" id="g-fechar" type="button" aria-label="Fechar">×</button>
+  <div id="g-corpo"></div>
+</aside>
+
+<div class="zoom" id="zoom" hidden>
+  <button class="g-fechar" id="z-fechar" type="button" aria-label="Fechar mapa">×</button>
+  <img id="z-img" alt="">
+</div>
+
+<script src="assets/setores-site.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>
