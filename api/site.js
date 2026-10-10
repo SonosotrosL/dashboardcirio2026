@@ -73,8 +73,24 @@ async function montar() {
     };
   });
 
+  // planilha de equipe: lê direto pelo link da planilha (atualiza na hora);
+  // se não der, usa o link "publicado na web" que o site usa (o Google pode levar alguns minutos para atualizar esse)
+  const eqLink = constante('EQUIPE_SHEET_LINK');
+  const mId = eqLink.match(/\/d\/([a-zA-Z0-9_-]{20,})/);
+  const mGid = eqLink.match(/gid=(\d+)/);
+  const eqDireto = mId ? `https://docs.google.com/spreadsheets/d/${mId[1]}/gviz/tq?tqx=out:csv&headers=1${mGid ? '&gid=' + mGid[1] : ''}` : '';
+  const lerEquipe = async () => {
+    if (eqDireto) {
+      try {
+        const t = await texto(eqDireto + '&_=' + Date.now());
+        if (!/^\s*</.test(t) && /ENCARREGADO/i.test(t.split('\n')[0])) return t;
+      } catch (e) {}
+    }
+    return equipeUrl ? texto(equipeUrl + (equipeUrl.includes('?') ? '&' : '?') + '_=' + Date.now()).catch(() => '') : '';
+  };
+
   const [eqTxt, regTxt] = await Promise.all([
-    equipeUrl ? texto(equipeUrl + (equipeUrl.includes('?') ? '&' : '?') + '_=' + Date.now()).catch(() => '') : '',
+    lerEquipe(),
     registrosUrl ? texto(registrosUrl + (registrosUrl.includes('?') ? '&' : '?') + '_=' + Date.now()).catch(() => '') : '',
   ]);
 
@@ -83,7 +99,7 @@ async function montar() {
     url: SITE_URL,
     geradoEm: new Date().toISOString(),
     setores,
-    equipe: eqTxt ? equipe(eqTxt, D) : {},
+    ...(() => { const e = eqTxt ? equipe(eqTxt, D) : { pessoas: {}, previsto: {} }; return { equipe: e.pessoas, previsto: e.previsto }; })(),
     registros: regTxt ? registros(regTxt, D) : {},
   };
 }
@@ -101,7 +117,10 @@ function equipe(txt, D) {
   const iEncFone = coluna(head, ['TELEFONE ENCARREGADO', 'Telefone do Encarregado', 'Fone Encarregado', 'Telefone Encarregado(a)', 'Whatsapp Encarregado', 'Contato Encarregado']);
   const iSup = coluna(head, ['SUPERVISOR', 'Nome do Supervisor']);
   const iSupFone = coluna(head, ['TELEFONE SUPERVISOR', 'Telefone do Supervisor', 'Fone Supervisor', 'Telefone Supervisor(a)', 'Whatsapp Supervisor', 'Contato Supervisor']);
-  if (iEv < 0 || iSetor < 0 || iEnc < 0 || iSup < 0) return {};
+  const iAg = coluna(head, ['AGENTES', 'Agentes previstos', 'Nº DE AGENTES', 'N° DE AGENTES']);
+  const iNEq = coluna(head, ['Nº DE EQUIPAMENTO', 'N° DE EQUIPAMENTO', 'N DE EQUIPAMENTO']);
+  const iEq = coluna(head, ['EQUIPAMENTO', 'EQUIPAMENTOS']);
+  if (iEv < 0 || iSetor < 0) return { pessoas: {}, previsto: {} };
 
   const idx = {}, unico = {};
   D.setores.forEach((s) => {
@@ -127,14 +146,25 @@ function equipe(txt, D) {
   };
   const valido = (v) => v && !/^[-–—]$/.test(v);
 
-  const out = {};
+  const out = {}, previsto = {};
   rows.slice(1).forEach((r) => {
     const ev = parseInt(r[iEv], 10);
-    const enc = String(r[iEnc] || '').trim();
-    const sup = String(r[iSup] || '').trim();
-    if (!ev || (!valido(enc) && !valido(sup))) return;
+    if (!ev) return;
     const sid = casar(ev, iEvNome >= 0 ? r[iEvNome] : '', r[iSetor]);
     if (!sid) return;
+
+    // agentes e equipamentos previstos: primeiro valor preenchido do setor
+    const pv = (previsto[sid] = previsto[sid] || { agentes: '', equip: '' });
+    const ag = iAg >= 0 ? String(r[iAg] || '').trim() : '';
+    if (!pv.agentes && valido(ag)) pv.agentes = ag;
+    const nEq = iNEq >= 0 ? String(r[iNEq] || '').trim() : '';
+    const eq = iEq >= 0 ? String(r[iEq] || '').trim() : '';
+    const eqTxt = [valido(nEq) ? nEq : '', valido(eq) ? eq : ''].filter(Boolean).join(' ');
+    if (!pv.equip && eqTxt) pv.equip = eqTxt;
+
+    const enc = iEnc >= 0 ? String(r[iEnc] || '').trim() : '';
+    const sup = iSup >= 0 ? String(r[iSup] || '').trim() : '';
+    if (!valido(enc) && !valido(sup)) return;
     (out[sid] = out[sid] || []).push({
       enc: valido(enc) ? enc : '',
       encFone: valido(enc) ? String(r[iEncFone] || '').trim() : '',
@@ -142,7 +172,7 @@ function equipe(txt, D) {
       supFone: valido(sup) ? String(r[iSupFone] || '').trim() : '',
     });
   });
-  return out;
+  return { pessoas: out, previsto };
 }
 
 /* ---------------- registros de campo (formulário) ---------------- */

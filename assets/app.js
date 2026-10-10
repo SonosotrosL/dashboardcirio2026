@@ -7,7 +7,7 @@
 
   var CHAVE_SITE = 'painel-cirio-2026:site';
   var INTERVALO_SITE = 60000;
-  var SITE = { url: '', setores: [], equipe: {}, registros: {} };
+  var SITE = { url: '', setores: [], equipe: {}, registros: {}, previsto: {} };
   var $ = function (id) { return document.getElementById(id) || document.createElement('div'); };
 
   var estado = {
@@ -56,7 +56,7 @@
   }
   var SITE_POR_COD = {}, SITE_POR_TIT = {}, cacheSite = {};
   function indexarSite(d) {
-    SITE = { url: d.url || '', setores: d.setores || [], equipe: d.equipe || {}, registros: d.registros || {} };
+    SITE = { url: d.url || '', setores: d.setores || [], equipe: d.equipe || {}, registros: d.registros || {}, previsto: d.previsto || {} };
     SITE_POR_COD = {}; SITE_POR_TIT = {}; cacheSite = {};
     SITE.setores.forEach(function (s) {
       var c = s.cod && /[A-Z]/i.test(s.cod) ? codigoDe(s.cod) || chave(s.cod) : null;
@@ -392,7 +392,8 @@
         '<a href="' + esc(SITE.url + '/#/setor:' + site.id) + '" target="_blank" rel="noopener">Ver no Caderno de Operação ↗</a>' +
         '</div>' +
         (site.local ? '<div class="g-grid" style="margin-top:12px">' + gi('Local de concentração', site.local, true) +
-          gi('Equipamentos previstos', site.equip || '—') + gi('Agentes previstos', site.agentes || '—') + '</div>' : '') +
+          gi('Equipamentos previstos', (SITE.previsto[site.id] && SITE.previsto[site.id].equip) || site.equip || '—') +
+          gi('Agentes previstos', (SITE.previsto[site.id] && SITE.previsto[site.id].agentes) || site.agentes || '—') + '</div>' : '') +
         '</div>';
     }
 
