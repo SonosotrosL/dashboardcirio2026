@@ -119,13 +119,58 @@
       };
     });
     var atuais = mon.filter(function (r) { return r.atual === 1; });
-    return { k: bruto.indicadores || {}, setores: setores, linhas: mon, atuais: atuais };
+    var eventos = listaEventos(setores);
+    var ev = estado.evento;
+    if (ev !== 'todos' && !eventos.some(function (e) { return String(e.ev) === String(ev); })) ev = 'todos';
+    estado.eventoAtivo = ev;
+    if (ev === 'todos') return { k: bruto.indicadores || {}, setores: setores, linhas: mon, atuais: atuais, eventos: eventos };
+
+    // recorte do evento: mesmos critérios da aba Dashboard, aplicados só às linhas dos setores desse evento
+    var doEv = function (nome) { var st = siteDe(nome); return st && String(st.ev) === String(ev); };
+    var setEv = setores.filter(function (x) { return doEv(x.nome); });
+    var linEv = mon.filter(function (r) { return r.setor && doEv(r.setor); });
+    var atEv = linEv.filter(function (r) { return r.atual === 1; });
+    var soma = function (arr, f) { return arr.reduce(function (t, r) { return t + (r[f] || 0); }, 0); };
+    var k = {
+      cadastrados: setEv.length,
+      iniciados: atEv.filter(function (r) { return r.inicio != null; }).length,
+      concluidos: atEv.filter(function (r) { return igual(r.situacao, 'Concluído'); }).length,
+      efetivo: soma(atEv, 'efetivo'),
+      veiculos: atEv.filter(function (r) { return r.placa; }).length,
+      aguardandoInstr: atEv.filter(function (r) { return igual(r.situacao, 'Aguardando instrução'); }).length,
+      avancoMedio: atEv.length ? soma(atEv, 'avanco') / atEv.length : 0,
+      emExecucao: atEv.filter(function (r) { return igual(r.situacao, 'Em execução'); }).length,
+      km: soma(atEv, 'kmAcum'),
+      horas: soma(linEv, 'horas')
+    };
+    return { k: k, setores: setEv, linhas: linEv, atuais: atEv, eventos: eventos };
+  }
+
+  function listaEventos(setores) {
+    var vistos = {}, lista = [];
+    setores.forEach(function (x) {
+      if (x.site && !vistos[x.site.ev]) { vistos[x.site.ev] = 1; lista.push({ ev: x.site.ev, nome: x.site.evento, data: x.site.evData }); }
+    });
+    return lista.sort(function (a, b) { return a.ev - b.ev; });
+  }
+  function nomeCurto(n) { return String(n || '').replace(/^Procissão d[oa]s? /i, ''); }
+
+  function renderEventos() {
+    var evs = estado.calc.eventos, at = String(estado.eventoAtivo);
+    var h = '<button class="chip" type="button" data-evento="todos" aria-pressed="' + (at === 'todos') + '">Todos</button>';
+    h += evs.map(function (e) {
+      return '<button class="chip" type="button" data-evento="' + e.ev + '" aria-pressed="' + (at === String(e.ev)) + '">' +
+        esc(nomeCurto(e.nome)) + '<small>' + esc(String(e.data || '').slice(0, 5)) + '</small></button>';
+    }).join('');
+    html('eventos', h);
   }
 
   /* ================= render ================= */
   function render() {
     if (!estado.bruto || !estado.bruto.indicadores) return;
+    if (!estado.evento) estado.evento = 'todos';
     estado.calc = montarVisao(estado.bruto);
+    renderEventos();
     renderKpis();
     renderFiltros();
     renderSetores();
@@ -518,6 +563,10 @@
   /* ================= eventos ================= */
   document.addEventListener('click', function (e) {
     var t = e.target;
+    var ev = t.closest('[data-evento]');
+    if (ev) { estado.evento = ev.getAttribute('data-evento'); estado.filtro = 'todos'; estado.limiteTabela = PASSO_TABELA; render(); return; }
+    var topo = t.closest('#topo-btn');
+    if (topo) { window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
     var f = t.closest('[data-filtro]');
     if (f) { estado.filtro = f.getAttribute('data-filtro'); renderFiltros(); renderSetores(); return; }
     var m = t.closest('[data-mais]');
@@ -543,6 +592,11 @@
     var v = this.value;
     tBusca = setTimeout(function () { estado.busca = v; renderSetores(); renderTabela(); }, 120);
   });
+  var tTopo;
+  window.addEventListener('scroll', function () {
+    if (tTopo) return;
+    tTopo = setTimeout(function () { tTopo = null; $('topo-btn').hidden = window.scrollY < 500; }, 100);
+  }, { passive: true });
   document.addEventListener('visibilitychange', function () {
     if (!document.hidden && Date.now() - estado.ultimaOk > 10000) carregar();
   });
